@@ -80,24 +80,6 @@ type WalletResponse struct {
 	} `json:"result"`
 }
 
-func LoadAccounts(filename string) ([]AccountConfig, error) {
-	// Open the file
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("could not open file: %v", err)
-	}
-	defer file.Close()
-
-	// Initialize a slice to store the accounts
-	var accounts []AccountConfig
-
-	// Decode JSON data directly into the slice
-	if err := json.NewDecoder(file).Decode(&accounts); err != nil {
-		return nil, fmt.Errorf("could not parse JSON: %v", err)
-	}
-	return accounts, nil
-}
-
 func getWalletBalance(account AccountConfig) (float64, float64, error) {
 	apiURL := "https://api2.bybit.com/siteapi/unified/private/spot-walletbalance"
 	body := map[string]interface{}{
@@ -180,7 +162,7 @@ func createMarketOrder(side string, qty float64, account AccountConfig) error {
 	// Create the order request payload
 
 	body := map[string]interface{}{
-		"symbol_id": "SCRUSDT", // Symbol to trade
+		"symbol_id": symbol,
 		//"price":         fmt.Sprintf("%.4f", price), // Limit price
 		"quantity":      fmt.Sprintf("%.1f", qty), // Order quantity
 		"side":          side,                     // Side of the order (BUY or SELL)
