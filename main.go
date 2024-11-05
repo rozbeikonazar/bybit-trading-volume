@@ -28,10 +28,12 @@ const (
 	symbol = "SCRUSDT" // Symbol to subscribe to
 	//proxyURLStr      = "http://user207151:pe17rz@31.59.35.232:5919" // Set your proxy URL here
 	symbol_short     = "SCR"
-	TargetCommission = 0.5   // Target cumulative commission in USD
+	TargetCommission = 20    // Target cumulative commission in USD
 	CommissionRate   = 0.001 // Commission rate (e.g., 0.1%)
 
 )
+
+var transferThresholds = []float64{5, 10.0, 15.0}
 
 //var latestPrice uint64 // Use atomic storage to safely read/write price
 
@@ -249,6 +251,109 @@ func createMarketOrder(side string, qty float64, account AccountConfig) error {
 	return nil
 }
 
+func pollBalance(account AccountConfig, accountType, sCoin, toAccountType string) (string, string, string, error) {
+	pollBalanceUrl := fmt.Sprintf("https://api2.bybit.com/v3/private/asset/account/coin-balance?accountType=%s&sCoin=%s&toAccountType=%s", accountType, sCoin, toAccountType)
+	client := &http.Client{}
+	if account.Proxy != "" {
+		proxyURL, err := url.Parse(account.Proxy)
+		if err != nil {
+			return "", "", "", fmt.Errorf("invalid proxy URL: %v", err)
+		}
+		client.Transport = &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		}
+	}
+
+	// Create a new HTTP GET request
+	req, err := http.NewRequest("GET", pollBalanceUrl, nil)
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// Set the necessary headers
+	req.Header.Set("Cookie", account.Token)
+	req.Header.Set("User-Agent", account.UserAgent)
+
+	// Execute the request
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to poll balance: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	// Parse the JSON response
+	var result struct {
+		Result struct {
+			AccountId string `json:"accountId"`
+			Balance   struct {
+				SCoin           string `json:"sCoin"`
+				TransferBalance string `json:"transferBalance"`
+			} `json:"balance"`
+		} `json:"result"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", "", "", fmt.Errorf("failed to unmarshal response: %v", err)
+	}
+
+	return result.Result.AccountId, result.Result.Balance.SCoin, result.Result.Balance.TransferBalance, nil
+}
+
+// Sends a POST request to Bybit's transfer endpoint
+func executeTransfer(account AccountConfig, amount, fromAccountId, toAccountId, sCoin string) error {
+	// Prepare the payload for the transfer request
+	payload := map[string]string{
+		"amount":          amount,
+		"fromAccountType": "ACCOUNT_TYPE_FUND",
+		"from_account_id": fromAccountId,
+		"sCoin":           sCoin,
+		"toAccountType":   "ACCOUNT_TYPE_UNIFIED",
+		"to_account_id":   toAccountId,
+	}
+
+	// Convert the payload to JSON format
+	jsonPayload, _ := json.Marshal(payload)
+	req, err := http.NewRequest("POST", "https://api2.bybit.com/v3/private/asset/transfer", bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		return fmt.Errorf("failed to create transfer request: %v", err)
+	}
+
+	req.Header.Set("User-Agent", account.UserAgent)
+	req.Header.Set("Cookie", account.Token) // Using Cookie for authorization
+
+	// Set up the HTTP client with the proxy if provided
+	client := &http.Client{}
+	if account.Proxy != "" {
+		proxyURL, err := url.Parse(account.Proxy)
+		if err != nil {
+			return fmt.Errorf("invalid proxy URL: %v", err)
+		}
+		client.Transport = &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		}
+	}
+
+	// Execute the HTTP request
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to execute transfer: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Check for a successful status code
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected response status: %d", resp.StatusCode)
+	}
+
+	fmt.Println("Transfer successful.")
+	return nil
+}
+
 // func connectToWebSocket(wsProxy, wsURL, symbol string, wg *sync.WaitGroup) {
 // 	defer wg.Done() // Mark this goroutine as done when it exits
 
@@ -318,6 +423,7 @@ func roundDownToPrecision(value float64, precision int) float64 {
 
 func tradeLoop(ctx context.Context, account AccountConfig, accountIndex int) error {
 	cumulativeCommission := 0.0
+	nextThresholdIndex := 0
 
 	for cumulativeCommission < TargetCommission {
 		// Check if the context has been canceled (i.e., graceful shutdown requested)
@@ -374,7 +480,36 @@ func tradeLoop(ctx context.Context, account AccountConfig, accountIndex int) err
 
 			// Pause briefly to avoid rate limits
 			tradeCooldown := time.Duration(500+rand.Intn(1500)) * time.Millisecond
+
 			time.Sleep(tradeCooldown)
+
+			if nextThresholdIndex < len(transferThresholds) && cumulativeCommission >= transferThresholds[nextThresholdIndex] {
+				fmt.Printf("Account %d: Reached cumulative trading volume of $%.2f, polling for transfer...\n", accountIndex, transferThresholds[nextThresholdIndex])
+
+				// Step 1: Poll both endpoints to get fromAccountId and toAccountId
+				fromAccountId, sCoin, transferBalance, err := pollBalance(account, "ACCOUNT_TYPE_FUND", "USDT", "ACCOUNT_TYPE_UNIFIED")
+				if err != nil {
+					fmt.Printf("Account %d: Error polling fund account balance: %v\n", accountIndex, err)
+					return err
+				}
+
+				toAccountId, _, _, err := pollBalance(account, "ACCOUNT_TYPE_UNIFIED", "USDT", "ACCOUNT_TYPE_FUND")
+				if err != nil {
+					fmt.Printf("Account %d: Error polling unified account balance: %v\n", accountIndex, err)
+					return err
+				}
+
+				// Step 2: Execute the transfer
+				err = executeTransfer(account, transferBalance, fromAccountId, toAccountId, sCoin)
+				if err != nil {
+					fmt.Printf("Account %d: Error executing transfer: %v\n", accountIndex, err)
+					return err
+				}
+				fmt.Printf("Account %d: Transfer executed successfully.\n", accountIndex)
+
+				// Move to the next threshold
+				nextThresholdIndex++
+			}
 
 			// Check if cumulative commission has reached the target after each trade
 			if cumulativeCommission >= TargetCommission {
