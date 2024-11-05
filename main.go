@@ -25,15 +25,33 @@ import (
 
 const (
 	//wsURL            = "wss://stream.bybit.com/v5/public/spot"      // Mainnet WebSocket endpoint for spot
-	symbol = "SCRUSDT" // Symbol to subscribe to
+	symbol = "XUSDT" // Symbol to subscribe to
 	//proxyURLStr      = "http://user207151:pe17rz@31.59.35.232:5919" // Set your proxy URL here
-	symbol_short     = "SCR"
-	TargetCommission = 20    // Target cumulative commission in USD
+	symbol_short     = "X"
+	TargetCommission = 5     // Target cumulative commission in USD
 	CommissionRate   = 0.001 // Commission rate (e.g., 0.1%)
 
 )
 
-var transferThresholds = []float64{5, 10.0, 15.0}
+var transferThresholds = []float64{1.0, 2.0, 3.0}
+
+func LoadAccounts(filename string) ([]AccountConfig, error) {
+	// Open the file
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("could not open file: %v", err)
+	}
+	defer file.Close()
+
+	// Initialize a slice to store the accounts
+	var accounts []AccountConfig
+
+	// Decode JSON data directly into the slice
+	if err := json.NewDecoder(file).Decode(&accounts); err != nil {
+		return nil, fmt.Errorf("could not parse JSON: %v", err)
+	}
+	return accounts, nil
+}
 
 //var latestPrice uint64 // Use atomic storage to safely read/write price
 
@@ -160,14 +178,14 @@ func getWalletBalance(account AccountConfig) (float64, float64, error) {
 }
 func createMarketOrder(side string, qty float64, account AccountConfig) error {
 	// Create the order request payload
-
+	qtyInt := int(qty)
 	body := map[string]interface{}{
-		"symbol_id": symbol,
+		"symbol_id": "XUSDT",
 		//"price":         fmt.Sprintf("%.4f", price), // Limit price
-		"quantity":      fmt.Sprintf("%.1f", qty), // Order quantity
-		"side":          side,                     // Side of the order (BUY or SELL)
-		"type":          "market",                 // Order type
-		"time_in_force": "GTC",                    // Time in force
+		"quantity":      fmt.Sprintf("%d", qtyInt), // Order quantity
+		"side":          side,                      // Side of the order (BUY or SELL)
+		"type":          "market",                  // Order type
+		"time_in_force": "GTC",                     // Time in force
 	}
 
 	jsonBody, err := json.Marshal(body)
@@ -428,6 +446,7 @@ func tradeLoop(ctx context.Context, account AccountConfig, accountIndex int) err
 				fmt.Printf("Account %d: Error getting wallet balance: %v\n", accountIndex, err)
 				return err
 			}
+			fmt.Println("Account: ", accountIndex, "usdtBalance: ", usdtBalance)
 			// Round down balance for precision
 			qty := roundDownToPrecision(usdtBalance, 1)
 			// Place a buy order using the available USDT balance
@@ -450,7 +469,8 @@ func tradeLoop(ctx context.Context, account AccountConfig, accountIndex int) err
 			}
 
 			// Round down SCR balance for precision
-			xQty := roundDownToInt(xBalance)
+			//xQty := roundDownToPrecision(xBalance, 1)
+			xQty := xBalance
 
 			// Place a sell order using the available SCR balance
 			err = createMarketOrder("sell", xQty, account)
