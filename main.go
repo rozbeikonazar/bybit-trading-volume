@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os/signal"
+	"syscall"
 
 	//"log"
 	"math"
@@ -26,10 +28,8 @@ const (
 	symbol = "SCRUSDT" // Symbol to subscribe to
 	//proxyURLStr      = "http://user207151:pe17rz@31.59.35.232:5919" // Set your proxy URL here
 	symbol_short     = "SCR"
-	TargetCommission = 20.0  // Target cumulative commission in USD
+	TargetCommission = 0.5   // Target cumulative commission in USD
 	CommissionRate   = 0.001 // Commission rate (e.g., 0.1%)
-	MinOrderQty      = 0.1   // Minimum order quantity
-	//TradeCooldown    = 2 * time.Second // Cooldown period between trades
 
 )
 
@@ -134,14 +134,14 @@ func getWalletBalance(account AccountConfig) (float64, float64, error) {
 	defer resp.Body.Close()
 
 	// Print status code for debugging
-	fmt.Printf("Response Status Code: %d\n", resp.StatusCode)
+	//fmt.Printf("Response Status Code: %d\n", resp.StatusCode)
 
 	// Read the response body for debugging
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to read response body: %v", err)
 	}
-	fmt.Printf("Response Body: %s\n", string(bodyBytes))
+	//fmt.Printf("Response Body: %s\n", string(bodyBytes))
 
 	// Decode the response body into the expected structure
 	var walletResponse WalletResponse
@@ -157,7 +157,7 @@ func getWalletBalance(account AccountConfig) (float64, float64, error) {
 	// Parse balance information with debug print statements
 	var tokenBalance, usdtBalance float64
 	for _, coin := range walletResponse.Result.CoinList {
-		fmt.Printf("TokenID: %s, SpotAvailableBalance: %s\n", coin.TokenID, coin.SpotAvailableBalance) // Debugging output
+		//fmt.Printf("TokenID: %s, SpotAvailableBalance: %s\n", coin.TokenID, coin.SpotAvailableBalance) // Debugging output
 
 		if coin.TokenID == symbol_short {
 			tokenBalance, err = strconv.ParseFloat(coin.SpotAvailableBalance, 64)
@@ -171,7 +171,7 @@ func getWalletBalance(account AccountConfig) (float64, float64, error) {
 			}
 		}
 	}
-	fmt.Printf("Parsed tokenBalance: %f, usdtBalance: %f\n", tokenBalance, usdtBalance) // Final parsed balances
+	//fmt.Printf("Parsed tokenBalance: %f, usdtBalance: %f\n", tokenBalance, usdtBalance) // Final parsed balances
 	return tokenBalance, usdtBalance, nil
 }
 func createMarketOrder(side string, qty float64, account AccountConfig) error {
@@ -327,7 +327,8 @@ func tradeLoop(ctx context.Context, account AccountConfig, accountIndex int) err
 			return nil
 		default:
 			// Trade actions for account
-			fmt.Printf("Account %d: Starting trade cycle\n", accountIndex)
+
+			//fmt.Printf("Account %d: Starting trade cycle\n", accountIndex)
 
 			// Step 1: Buy Order - Determine available USDT balance
 			_, usdtBalance, err := getWalletBalance(account)
@@ -335,14 +336,8 @@ func tradeLoop(ctx context.Context, account AccountConfig, accountIndex int) err
 				fmt.Printf("Account %d: Error getting wallet balance: %v\n", accountIndex, err)
 				return err
 			}
-
 			// Round down balance for precision
 			qty := roundDownToPrecision(usdtBalance, 1)
-			if qty < MinOrderQty {
-				fmt.Printf("Account %d: Order quantity %f is below minimum required %f\n", accountIndex, qty, MinOrderQty)
-				return nil
-			}
-
 			// Place a buy order using the available USDT balance
 			err = createMarketOrder("buy", qty, account)
 			if err != nil {
@@ -364,10 +359,6 @@ func tradeLoop(ctx context.Context, account AccountConfig, accountIndex int) err
 
 			// Round down SCR balance for precision
 			scrQty := roundDownToPrecision(scrBalance, 1)
-			if scrQty < MinOrderQty {
-				fmt.Printf("Account %d: Sell quantity %f is below minimum required %f\n", accountIndex, scrQty, MinOrderQty)
-				return nil
-			}
 
 			// Place a sell order using the available SCR balance
 			err = createMarketOrder("sell", scrQty, account)
@@ -382,7 +373,7 @@ func tradeLoop(ctx context.Context, account AccountConfig, accountIndex int) err
 			fmt.Printf("Account %d: Cumulative Commission after sell: $%.5f\n", accountIndex, cumulativeCommission)
 
 			// Pause briefly to avoid rate limits
-			tradeCooldown := time.Duration(rand.Intn(5)+1) * time.Second
+			tradeCooldown := time.Duration(500+rand.Intn(1500)) * time.Millisecond
 			time.Sleep(tradeCooldown)
 
 			// Check if cumulative commission has reached the target after each trade
@@ -404,13 +395,12 @@ func main() {
 
 	// Set up OS signal capturing for graceful shutdown
 	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	var wg sync.WaitGroup
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*600)
 	defer cancel()
 
-	// Define the staggered delay times in minutes
-	// 0, 3, and 6 minutes for each account
 	staggerDelayMin := 30 * time.Second
 	staggerDelayMax := 2 * time.Minute
 	for i, account := range accounts {
@@ -429,16 +419,13 @@ func main() {
 			}
 		}(account, i+1, delay)
 	}
-	// Wait for a shutdown signal
-	<-sigs
-	fmt.Println("Shutdown signal received")
-
-	// Trigger graceful shutdown by cancelling context
-	cancel()
-
-	// Wait for all goroutines to complete
+	go func() {
+		<-sigs
+		fmt.Println("Shutdown signal received")
+		cancel() // Cancel the context to signal all trade loops to stop
+	}()
+	// Wait for all goroutines to complete gracefully
 	wg.Wait()
 
-	fmt.Println("Application stopped")
-
+	fmt.Println("Application stopped gracefully")
 }
