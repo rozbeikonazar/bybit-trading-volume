@@ -403,6 +403,10 @@ func roundDownToPrecision(value float64, precision int) float64 {
 	return math.Floor(value*factor) / factor
 }
 
+func roundDownToInt(value float64) float64 {
+	return float64(math.Floor(value))
+}
+
 func tradeLoop(ctx context.Context, account AccountConfig, accountIndex int) error {
 	cumulativeCommission := 0.0
 	nextThresholdIndex := 0
@@ -439,22 +443,22 @@ func tradeLoop(ctx context.Context, account AccountConfig, accountIndex int) err
 			fmt.Printf("Account %d: Cumulative Commission after buy: $%.5f\n", accountIndex, cumulativeCommission)
 
 			// Step 2: Sell Order - Determine available SCR balance
-			scrBalance, _, err := getWalletBalance(account)
+			xBalance, _, err := getWalletBalance(account)
 			if err != nil {
 				fmt.Printf("Account %d: Error getting wallet balance: %v\n", accountIndex, err)
 				return err
 			}
 
 			// Round down SCR balance for precision
-			scrQty := roundDownToPrecision(scrBalance, 1)
+			xQty := roundDownToInt(xBalance)
 
 			// Place a sell order using the available SCR balance
-			err = createMarketOrder("sell", scrQty, account)
+			err = createMarketOrder("sell", xQty, account)
 			if err != nil {
 				fmt.Printf("Account %d: Error creating sell order: %v\n", accountIndex, err)
 				return err
 			}
-			fmt.Printf("Account %d: Sell Order Created, sold %.1f SCR\n", accountIndex, scrQty)
+			fmt.Printf("Account %d: Sell Order Created, sold %.1f X\n", accountIndex, xQty)
 
 			// Update cumulative commission after sell order
 			cumulativeCommission += qty * CommissionRate // USDT quantity to avoid bugs with WebSocket
