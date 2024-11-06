@@ -1,4 +1,4 @@
-module bybit-trading-volume
+module github.com/rozbeikonazar/bybit-trading-volume
 
 go 1.22.0
 
