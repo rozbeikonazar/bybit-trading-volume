@@ -499,20 +499,19 @@ func main() {
 	defer cancel()
 
 	for i, account := range accounts {
-		wg.Add(1)
-
 		// Calculate the delay for the current account
-		delay := time.Duration(rand.Intn(int(staggerDelayMax-staggerDelayMin)) + int(staggerDelayMin))
-
+		delay := time.Duration(rand.Intn(int(staggerDelayMax.Seconds()-staggerDelayMin.Seconds())))*time.Second + staggerDelayMin
+		time.Sleep(delay)
+		wg.Add(1)
 		// Sleep for the calculated delay
-		go func(acc AccountConfig, accIndex int, d time.Duration) {
-			time.Sleep(d) // Wait for the randomized delay
+		go func(acc AccountConfig, accIndex int) {
+			// Wait for the randomized delay
 			defer wg.Done()
 
 			if err := tradeLoop(ctx, acc, accIndex); err != nil {
 				fmt.Printf("Trade loop for account %d ended with error: %v\n", accIndex, err)
 			}
-		}(account, i+1, delay)
+		}(account, i+1)
 	}
 	go func() {
 		<-sigs
