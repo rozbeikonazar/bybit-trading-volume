@@ -33,7 +33,7 @@ const (
 
 )
 
-var transferThresholds = []float64{1.0, 2.0, 3.0}
+var transferThresholds = []float64{5, 10, 15}
 
 func LoadAccounts(filename string) ([]AccountConfig, error) {
 	// Open the file
