@@ -27,13 +27,13 @@ const (
 	symbol = "GRASSUSDT" // Symbol to subscribe to
 	//proxyURLStr      = "http://user207151:pe17rz@31.59.35.232:5919" // Set your proxy URL here
 	symbol_short     = "GRASS"
-	TargetCommission = 20.0  // Target cumulative commission in USD
+	TargetCommission = 20    // Target cumulative commission in USD
 	CommissionRate   = 0.001 // Commission rate (e.g., 0.1%)
 	precision        = 1
 )
 
 var transferThresholds = []float64{5, 10, 15}
-var staggerDelayMin = 30 * time.Second
+var staggerDelayMin = 1 * time.Second
 var staggerDelayMax = 2 * time.Minute
 
 //var latestPrice uint64 // Use atomic storage to safely read/write price
@@ -497,21 +497,25 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
+	rand.Seed(uint64(time.Now().UnixNano()))
 	for i, account := range accounts {
 		// Calculate the delay for the current account
 		delay := time.Duration(rand.Intn(int(staggerDelayMax.Seconds()-staggerDelayMin.Seconds())))*time.Second + staggerDelayMin
-		time.Sleep(delay)
 		wg.Add(1)
-		// Sleep for the calculated delay
-		go func(acc AccountConfig, accIndex int) {
-			// Wait for the randomized delay
+		go func(acc AccountConfig, accIndex int, d time.Duration) {
 			defer wg.Done()
-
+			select {
+			case <-ctx.Done():
+				fmt.Printf("Account %d, cancelled before sleep finished, should have slept for %v\n", accIndex, d.Truncate(time.Millisecond))
+				return
+			case <-time.After(d):
+				fmt.Printf("Accound %d, slept for %v\n", accIndex, d.Truncate(time.Millisecond))
+			}
 			if err := tradeLoop(ctx, acc, accIndex); err != nil {
 				fmt.Printf("Trade loop for account %d ended with error: %v\n", accIndex, err)
 			}
-		}(account, i+1)
+		}(account, i+1, delay)
+
 	}
 	go func() {
 		<-sigs
