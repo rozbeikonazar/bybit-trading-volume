@@ -34,7 +34,7 @@ const (
 
 var transferThresholds = []float64{5, 10, 15}
 var staggerDelayMin = 1 * time.Second
-var staggerDelayMax = 2 * time.Minute
+var staggerDelayMax = 5 * time.Minute
 
 //var latestPrice uint64 // Use atomic storage to safely read/write price
 
